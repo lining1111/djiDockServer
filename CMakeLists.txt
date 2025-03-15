@@ -4,6 +4,7 @@ project(djiDockServer)
 set(CMAKE_CXX_STANDARD 14)
 
 include_directories(include)
+include_directories(${CMAKE_CURRENT_LIST_DIR})
 
 link_directories(${CMAKE_CURRENT_LIST_DIR}/lib/${CMAKE_HOST_SYSTEM_PROCESSOR})
 link_directories(${CMAKE_BINARY_DIR})
@@ -84,3 +85,6 @@ target_link_libraries(djiDockServer ${LIBS})
 
 add_executable(test_ffmpeg_decode_h264 test/test_ffmpeg_decode_h264.cpp)
 target_link_libraries(test_ffmpeg_decode_h264 ${LIBS})
+
+add_executable(rtsp_push test/rtsp_push.cpp)
+target_link_libraries(rtsp_push ${LIBS})

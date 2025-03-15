@@ -138,10 +138,12 @@ namespace dji {
         local->initDecoder();
         if (local->isEncodeImage) {
             //1.1初始化图片编码器
-            local->initImageEncoder();
+            local->encoderImage = new EncoderImage(local->_name);
+            local->encoderImage->init();
         } else {
             //1.2初始化RTSP编码器
-            local->initRTSPEncoder("rtsp://192.168.200.251/live/test");
+            local->encoderRTSP = new EncoderRTSP("rtsp://192.168.200.251/live/test", local->_quality);
+            local->encoderRTSP->init();
         }
 
         //2.持续将接到的流解析成图片
@@ -158,13 +160,16 @@ namespace dji {
         }
         //3.释放资源
         local->deInitDecoder();
-        if (local->isEncodeImage) {
-            local->deInitImageEncoder();
-        } else {
-            local->deInitRTSPEncoder();
+        if (local->encoderImage != nullptr) {
+            local->encoderImage->deInit();
+            delete local->encoderImage;
+            local->encoderImage = nullptr;
         }
-
-
+        if (local->encoderRTSP != nullptr) {
+            local->encoderRTSP->deInit();
+            delete local->encoderRTSP;
+            local->encoderRTSP = nullptr;
+        }
         LOG(WARNING) << "Liveview " << local->_name << "ThreadProcessH264Stream end";
         return 0;
     }
@@ -258,94 +263,21 @@ namespace dji {
                 if (isEncodeImage) {
                     //解析成图片
                     cv::Mat image;
-                    encodeToImage(pPacket, image);
-                    LOG(INFO) << "imag size:h:" << image.rows << ",w:" << image.cols;
+                    if (encoderImage != nullptr) {
+                        encoderImage->encode(pCodecCtx, pPacket, image);
+                        LOG(INFO) << "imag size:h:" << image.rows << ",w:" << image.cols;
 //                    cv::imshow("image", image);
 //                    cv::waitKey(1);
+                    }
                 } else {
-                    encodeToRTSP(pPacket);
+                    if (encoderRTSP != nullptr) {
+                        encoderRTSP->encode(pPacket);
+                    }
                 }
 
             }
         }
 
-    }
-
-
-    void DJILiveview::encodeToImage(AVPacket *packet, cv::Mat &image) {
-
-        //图片编码器相关
-        SwsContext *pSwsCtx = nullptr;
-        uint8_t *rbgBuf = nullptr;
-        size_t bufSize = 0;
-
-        //开始编码
-        int32_t result = 0;
-        result = avcodec_send_packet(pCodecCtx, packet);
-        if (result < 0) {
-            LOG(ERROR) << "Liveview " << _name << " can not send packet";
-            return;
-        }
-
-        if (pFrameYUV == nullptr || pFrameRGB == nullptr) {
-            LOG(ERROR) << "Liveview " << _name << " frame null";
-            return;
-        }
-
-        while (result >= 0) {
-            result = avcodec_receive_frame(pCodecCtx, pFrameYUV);
-            if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
-                break;
-            } else if (result < 0) {
-                LOG(ERROR) << "Liveview " << _name << " can not decode packet";
-                break;
-            }
-
-            //将解码后的数据编码成图片
-            int w = pFrameYUV->width;
-            int h = pFrameYUV->height;
-            bufSize = avpicture_get_size(AV_PIX_FMT_RGB24, w, h);
-            if (rbgBuf == nullptr) {
-                rbgBuf = (uint8_t *) av_malloc(bufSize);
-            }
-
-            if (pSwsCtx != nullptr) {
-                sws_freeContext(pSwsCtx);
-                pSwsCtx = nullptr;
-            }
-            pSwsCtx = sws_getContext(w, h, AV_PIX_FMT_YUV420P, w, h, AV_PIX_FMT_RGB24, SWS_BICUBIC, nullptr, nullptr,
-                                     nullptr);
-            if (pSwsCtx == nullptr) {
-                LOG(ERROR) << "Liveview " << _name << " can not alloc sws context";
-                return;
-            }
-
-            avpicture_fill((AVPicture *) pFrameRGB, rbgBuf, AV_PIX_FMT_RGB24, w, h);
-            sws_scale(pSwsCtx, (uint8_t const *const *) pFrameYUV->data, pFrameYUV->linesize, 0, h, pFrameRGB->data,
-                      pFrameRGB->linesize);
-            pFrameRGB->width = w;
-            pFrameRGB->height = h;
-            cv::Mat tmp(h, w, CV_8UC3, pFrameRGB->data[0], w * 3);
-            cv::cvtColor(tmp, image, cv::COLOR_RGB2BGR);
-        }
-
-        if (pSwsCtx != nullptr) {
-            sws_freeContext(pSwsCtx);
-            pSwsCtx = nullptr;
-        }
-        if (rbgBuf != nullptr) {
-            av_free(rbgBuf);
-        }
-
-    }
-
-    static int64_t pts = 0;
-
-    void DJILiveview::encodeToRTSP(AVPacket *packet) {
-
-        if (av_interleaved_write_frame(pFormatCtx, packet) < 0) {
-            LOG(ERROR) << "Liveview " << _name << " can not write frame";
-        }
     }
 
 

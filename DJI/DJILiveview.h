@@ -5,17 +5,6 @@
 #ifndef DJILIVEVIEW_H
 #define DJILIVEVIEW_H
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
-#include <libavutil/opt.h>
-#include <libavutil/mathematics.h>
-#include <libavutil/time.h>
-}
-
-#include <opencv2/opencv.hpp>
-
 #define GLOG_NO_ABBREVIATED_SEVERITIES
 
 #include <glog/logging.h>
@@ -28,32 +17,20 @@ extern "C" {
 #include <condition_variable>
 #include <future>
 #include "liveview.h"
+#include "Encoder/EncoderRTSP.hpp"
+#include "Encoder/EncoderImage.hpp"
+
 
 namespace dji {
     class DJILiveview {
-        typedef struct StreamInfo {
-            int w;
-            int h;
-            int fps;
-        } StreamInfo;
-
-        std::map<edge_sdk::Liveview::StreamQuality, StreamInfo> streamInfoMap = {
-                {edge_sdk::Liveview::kStreamQuality540p, {960, 540, 30}},
-                {edge_sdk::Liveview::kStreamQuality720p, {1280, 720, 30}},
-                {edge_sdk::Liveview::kStreamQuality720pHigh, {1280, 720, 30}},
-                {edge_sdk::Liveview::kStreamQuality1080p, {1920, 1080, 30}},
-                {edge_sdk::Liveview::kStreamQuality1080pHigh, {1920, 1080, 30}},
-        };
-
-
     private:
         std::string _name;
-        edge_sdk::Liveview::CameraType _type;
-        edge_sdk::Liveview::StreamQuality _quality;
+        edge_sdk::Liveview::CameraType _type = edge_sdk::Liveview::kCameraTypePayload;
+        edge_sdk::Liveview::StreamQuality _quality = edge_sdk::Liveview::kStreamQuality540p;
         bool isEncodeImage = false;
         std::shared_ptr<edge_sdk::Liveview> _liveview = nullptr;
         edge_sdk::Liveview::LiveviewStatus _status;
-        std::atomic<uint32_t> _stream_bitrate_kbps;
+        std::atomic<uint32_t> _stream_bitrate_kbps = {0};
         std::chrono::system_clock::time_point _recv_stream_data_time = std::chrono::system_clock::now();
         uint32_t _recv_stream_data_total_size = 0;
         //h264缓存相关
@@ -156,89 +133,8 @@ namespace dji {
 
         //编码相关的，分为编码到图片、编码到RTSP流
         //编码器 AVFrame-->AVPacket-->data
-        /**
-         * 一直解码，可以是图片，可以是RTSP流
-         */
-
-        AVFrame *pFrameYUV = nullptr;
-        AVFrame *pFrameRGB = nullptr;
-
-        int initImageEncoder() {
-            pFrameYUV = av_frame_alloc();
-            pFrameRGB = av_frame_alloc();
-            if (pFrameYUV == nullptr || pFrameRGB == nullptr) {
-                LOG(ERROR) << "Liveview " << _name << " can not alloc frame";
-                return -1;
-            }
-            return 0;
-        }
-
-        void deInitImageEncoder() {
-            if (pFrameYUV != nullptr) {
-                av_free(pFrameYUV);
-            }
-            if (pFrameRGB != nullptr) {
-                av_free(pFrameRGB);
-            }
-        }
-
-        /**
-         * 编码到图片
-         * @param frame
-         * @param image
-         */
-        void encodeToImage(AVPacket *packet, cv::Mat &image);
-
-        //RTSP流编码器相关
-        AVFormatContext *pFormatCtx = nullptr;
-
-        int initRTSPEncoder(std::string rtsp_addr) {
-            int ret = avformat_alloc_output_context2(&pFormatCtx, nullptr, "rtsp", rtsp_addr.c_str());
-            if (ret < 0) {
-                LOG(ERROR) << "Liveview " << _name << " can not alloc output context";
-                return -1;
-            }
-
-            //配置输出流
-            AVStream *out_stream = avformat_new_stream(pFormatCtx, NULL);
-            if (out_stream == nullptr) {
-                LOG(ERROR) << "Liveview " << _name << " can not alloc output stream";
-                return -1;
-            }
-
-            out_stream->codecpar->codec_id = AV_CODEC_ID_H264;
-            out_stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
-            //根据初始化时的视频质量来设置参数
-            auto iter = streamInfoMap[_quality];
-            out_stream->codecpar->width = iter.w;
-            out_stream->codecpar->height = iter.h;
-            out_stream->time_base = AVRational{1, iter.fps};
-
-            if (!(pFormatCtx->oformat->flags & AVFMT_NOFILE)) {
-                if (avio_open(&pFormatCtx->pb, rtsp_addr.c_str(), AVIO_FLAG_WRITE) < 0) {
-                    LOG(ERROR) << "Liveview " << _name << " can not open rtsp";
-                    return -1;
-                }
-            }
-            if (avformat_write_header(pFormatCtx, NULL) < 0) {
-                LOG(ERROR) << "Liveview " << _name << " can not write header";
-                return -1;
-            }
-
-            return 0;
-        }
-
-        void deInitRTSPEncoder() {
-            if (pFormatCtx != nullptr) {
-                if (!(pFormatCtx->oformat->flags & AVFMT_NOFILE)) {
-                    avio_closep(&pFormatCtx->pb);
-                }
-                avformat_free_context(pFormatCtx);
-            }
-        }
-
-        //编码器
-        void encodeToRTSP(AVPacket *packet);
+        EncoderImage *encoderImage = nullptr;
+        EncoderRTSP *encoderRTSP = nullptr;
 
     };
 }
