@@ -1,136 +1,205 @@
-extern "C" {
-#include <libavcodec/avcodec.h>
+/**
+ * 最简单的基于FFmpeg的推流器（推送RTMP）
+ * Simplest FFmpeg Streamer (Send RTMP)
+ *
+ * 雷霄骅 Lei Xiaohua
+ * leixiaohua1020@126.com
+ * 中国传媒大学/数字电视技术
+ * Communication University of China / Digital TV Technology
+ * http://blog.csdn.net/leixiaohua1020
+ *
+ * 本例子实现了推送本地视频至流媒体服务器（以RTMP为例）。
+ * 是使用FFmpeg进行流媒体推送最简单的教程。
+ *
+ * This example stream local media files to streaming media
+ * server (Use RTMP as example).
+ * It's the simplest FFmpeg streamer.
+ *
+ */
+
+#include <stdio.h>
+
+#define __STDC_CONSTANT_MACROS
+
+#ifdef _WIN32
+//Windows
+extern "C"
+{
+#include "libavformat/avformat.h"
+#include "libavutil/mathematics.h"
+#include "libavutil/time.h"
+};
+#else
+//Linux...
+#ifdef __cplusplus
+extern "C"
+{
+#endif
 #include <libavformat/avformat.h>
-#include <libavutil/opt.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/time.h>
-}
+#ifdef __cplusplus
+};
+#endif
+#endif
 
-#include <iostream>
-#include <cstdio>
-#include <thread>
-#include <chrono>
 
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <input.h264> <rtsp_url>" << std::endl;
-        return -1;
-    }
-
-    const char* inputFileName = argv[1];
-    const char* rtspUrl = argv[2];
-
-    // 初始化FFmpeg库
-    av_register_all();
-    avformat_network_init();
-
-    // 打开输入文件
-    AVFormatContext* inputFormatContext = nullptr;
-    if (avformat_open_input(&inputFormatContext, inputFileName, nullptr, nullptr) < 0) {
-        std::cerr << "Could not open input file: " << inputFileName << std::endl;
-        return -1;
-    }
-
-    if (avformat_find_stream_info(inputFormatContext, nullptr) < 0) {
-        std::cerr << "Could not find stream information." << std::endl;
-        avformat_close_input(&inputFormatContext);
-        return -1;
-    }
-
-    // 创建输出RTSP流
-    AVFormatContext* outputFormatContext = nullptr;
-    avformat_alloc_output_context2(&outputFormatContext, nullptr, "rtsp", rtspUrl);
-    if (!outputFormatContext) {
-        std::cerr << "Could not create output context." << std::endl;
-        avformat_close_input(&inputFormatContext);
-        return -1;
-    }
-
-    // 添加输出流
-    for (unsigned int i = 0; i < inputFormatContext->nb_streams; i++) {
-        AVStream* inStream = inputFormatContext->streams[i];
-        AVStream* outStream = avformat_new_stream(outputFormatContext, nullptr);
-        if (!outStream) {
-            std::cerr << "Failed to allocate output stream." << std::endl;
-            avformat_close_input(&inputFormatContext);
-            avformat_free_context(outputFormatContext);
-            return -1;
-        }
-        avcodec_parameters_copy(outStream->codecpar, inStream->codecpar);
-        outStream->codecpar->codec_tag = 0;
-    }
-
-    // 打开输出流
-    if (!(outputFormatContext->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&outputFormatContext->pb, outputFormatContext->filename, AVIO_FLAG_WRITE) < 0) {
-            std::cerr << "Could not open output URL: " << rtspUrl << std::endl;
-            avformat_close_input(&inputFormatContext);
-            avformat_free_context(outputFormatContext);
-            return -1;
-        }
-    }
-
-    if (avformat_write_header(outputFormatContext, nullptr) < 0) {
-        std::cerr << "Error occurred when opening output URL." << std::endl;
-        avformat_close_input(&inputFormatContext);
-        avformat_free_context(outputFormatContext);
-        return -1;
-    }
-
-    // 获取视频流的帧率
-    AVStream* videoStream = inputFormatContext->streams[0];
-    double fps = av_q2d(videoStream->avg_frame_rate);
-    if (fps <= 0) {
-        fps = 30.0; // 默认帧率
-    }
-    std::cout << "推流帧率: " << fps << " FPS" << std::endl;
-
-    // 推流循环
+int main(int argc, char* argv[])
+{
+    AVOutputFormat *ofmt = NULL;
+    //输入对应一个AVFormatContext，输出对应一个AVFormatContext
+    //（Input AVFormatContext and Output AVFormatContext）
+    AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
     AVPacket pkt;
-    int64_t startTime = av_gettime(); // 推流开始时间
-    while (true) {
-        if (av_read_frame(inputFormatContext, &pkt) < 0) {
-            // 文件读取结束，重新开始
-            av_seek_frame(inputFormatContext, -1, 0, AVSEEK_FLAG_FRAME);
-            continue;
-        }
+    const char *in_filename, *out_filename;
+    int ret, i;
+    int videoindex=-1;
+    int frame_index=0;
+    int64_t start_time=0;
+    //in_filename  = "cuc_ieschool.mov";
+    //in_filename  = "cuc_ieschool.mkv";
+    //in_filename  = "cuc_ieschool.ts";
+    //in_filename  = "cuc_ieschool.mp4";
+    //in_filename  = "cuc_ieschool.h264";
+//    in_filename  = "cuc_ieschool.flv";//输入URL（Input file URL）
+    in_filename  = "video/test.264";
 
-        if (pkt.stream_index < inputFormatContext->nb_streams) {
-            AVStream* inStream = inputFormatContext->streams[pkt.stream_index];
-            AVStream* outStream = outputFormatContext->streams[pkt.stream_index];
+    out_filename = "rtmp://localhost/live/test";//输出 URL（Output URL）[RTMP]//本地文件推送RTMP，实时流通过编解码后，可以RTSP
+    //out_filename = "rtp://233.233.233.233:6666";//输出 URL（Output URL）[UDP]
 
-            // 计算时间戳
-            pkt.pts = av_rescale_q_rnd(pkt.pts, inStream->time_base, outStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-            pkt.dts = av_rescale_q_rnd(pkt.dts, inStream->time_base, outStream->time_base, (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-            pkt.duration = av_rescale_q(pkt.duration, inStream->time_base, outStream->time_base);
-            pkt.pos = -1;
-
-            // 控制推流速度
-            int64_t ptsTime = av_rescale_q(pkt.pts, outStream->time_base, {1, 1000000});
-            int64_t nowTime = av_gettime() - startTime;
-            if (ptsTime > nowTime) {
-                std::this_thread::sleep_for(std::chrono::microseconds(ptsTime - nowTime));
-            }
-
-            // 写入数据包
-            if (av_interleaved_write_frame(outputFormatContext, &pkt) < 0) {
-                std::cerr << "Error muxing packet." << std::endl;
-                break;
-            }
-        }
-        av_packet_unref(&pkt);
+    av_register_all();
+    //Network
+    avformat_network_init();
+    //输入（Input）
+    if ((ret = avformat_open_input(&ifmt_ctx, in_filename, 0, 0)) < 0) {
+        printf( "Could not open input file.");
+        goto end;
+    }
+    if ((ret = avformat_find_stream_info(ifmt_ctx, 0)) < 0) {
+        printf( "Failed to retrieve input stream information");
+        goto end;
     }
 
-    // 写入尾部信息并清理资源
-    av_write_trailer(outputFormatContext);
+    for(i=0; i<ifmt_ctx->nb_streams; i++)
+        if(ifmt_ctx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO){
+            videoindex=i;
+            break;
+        }
 
-    if (outputFormatContext && !(outputFormatContext->oformat->flags & AVFMT_NOFILE)) {
-        avio_closep(&outputFormatContext->pb);
+    av_dump_format(ifmt_ctx, 0, in_filename, 0);
+
+    //输出（Output）
+
+    avformat_alloc_output_context2(&ofmt_ctx, NULL, "flv", out_filename); //RTMP
+    //avformat_alloc_output_context2(&ofmt_ctx, NULL, "mpegts", out_filename);//UDP
+
+    if (!ofmt_ctx) {
+        printf( "Could not create output context\n");
+        ret = AVERROR_UNKNOWN;
+        goto end;
+    }
+    ofmt = ofmt_ctx->oformat;
+    for (i = 0; i < ifmt_ctx->nb_streams; i++) {
+        //根据输入流创建输出流（Create output AVStream according to input AVStream）
+        AVStream *in_stream = ifmt_ctx->streams[i];
+        AVStream *out_stream = avformat_new_stream(ofmt_ctx, in_stream->codec->codec);
+        if (!out_stream) {
+            printf( "Failed allocating output stream\n");
+            ret = AVERROR_UNKNOWN;
+            goto end;
+        }
+        //复制AVCodecContext的设置（Copy the settings of AVCodecContext）
+        ret = avcodec_copy_context(out_stream->codec, in_stream->codec);
+        if (ret < 0) {
+            printf( "Failed to copy context from input to output stream codec context\n");
+            goto end;
+        }
+        out_stream->codec->codec_tag = 0;
+        if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+            out_stream->codec->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
+    //Dump Format------------------
+    av_dump_format(ofmt_ctx, 0, out_filename, 1);
+    //打开输出URL（Open output URL）
+    if (!(ofmt->flags & AVFMT_NOFILE)) {
+        ret = avio_open(&ofmt_ctx->pb, out_filename, AVIO_FLAG_WRITE);
+        if (ret < 0) {
+            printf( "Could not open output URL '%s'", out_filename);
+            goto end;
+        }
+    }
+    //写文件头（Write file header）
+    ret = avformat_write_header(ofmt_ctx, NULL);
+    if (ret < 0) {
+        printf( "Error occurred when opening output URL\n");
+        goto end;
     }
 
-    avformat_free_context(outputFormatContext);
-    avformat_close_input(&inputFormatContext);
+    start_time=av_gettime();
+    while (1) {
+        AVStream *in_stream, *out_stream;
+        //获取一个AVPacket（Get an AVPacket）
+        ret = av_read_frame(ifmt_ctx, &pkt);
+        if (ret < 0)
+            break;
+        //FIX：No PTS (Example: Raw H.264)
+        //Simple Write PTS
+        if(pkt.pts==AV_NOPTS_VALUE){
+            //Write PTS
+            AVRational time_base1=ifmt_ctx->streams[videoindex]->time_base;
+            //Duration between 2 frames (us)
+            int64_t calc_duration=(double)AV_TIME_BASE/av_q2d(ifmt_ctx->streams[videoindex]->r_frame_rate);
+            //Parameters
+            pkt.pts=(double)(frame_index*calc_duration)/(double)(av_q2d(time_base1)*AV_TIME_BASE);
+            pkt.dts=pkt.pts;
+            pkt.duration=(double)calc_duration/(double)(av_q2d(time_base1)*AV_TIME_BASE);
+        }
+        //Important:Delay
+        if(pkt.stream_index==videoindex){
+            AVRational time_base=ifmt_ctx->streams[videoindex]->time_base;
+            AVRational time_base_q={1,AV_TIME_BASE};
+            int64_t pts_time = av_rescale_q(pkt.dts, time_base, time_base_q);
+            int64_t now_time = av_gettime() - start_time;
+            if (pts_time > now_time)
+                av_usleep(pts_time - now_time);
 
-    std::cout << "RTSP推流完成！" << std::endl;
+        }
+
+        in_stream  = ifmt_ctx->streams[pkt.stream_index];
+        out_stream = ofmt_ctx->streams[pkt.stream_index];
+        /* copy packet */
+        //转换PTS/DTS（Convert PTS/DTS）
+        pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+        pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+        pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
+        pkt.pos = -1;
+        //Print to Screen
+        if(pkt.stream_index==videoindex){
+            printf("Send %8d video frames to output URL\n",frame_index);
+            frame_index++;
+        }
+        //ret = av_write_frame(ofmt_ctx, &pkt);
+        ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
+
+        if (ret < 0) {
+            printf( "Error muxing packet\n");
+            break;
+        }
+
+        av_free_packet(&pkt);
+
+    }
+    //写文件尾（Write file trailer）
+    av_write_trailer(ofmt_ctx);
+    end:
+    avformat_close_input(&ifmt_ctx);
+    /* close output */
+    if (ofmt_ctx && !(ofmt->flags & AVFMT_NOFILE))
+        avio_close(ofmt_ctx->pb);
+    avformat_free_context(ofmt_ctx);
+    if (ret < 0 && ret != AVERROR_EOF) {
+        printf( "Error occurred.\n");
+        return -1;
+    }
     return 0;
 }
