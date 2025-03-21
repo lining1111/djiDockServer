@@ -23,17 +23,24 @@ endfunction()
 
 #需要过滤的目录
 macro(SUBDIRLISTINCLUDE result curdir depth filtration_dirlist...)
-    if (${depth} STREQUAL "1")
-        FILE(GLOB_RECURSE children LIST_DIRECTORIES true RELATIVE ${curdir})
-    elseif (${depth} STREQUAL "2")
-        FILE(GLOB_RECURSE children LIST_DIRECTORIES true RELATIVE ${curdir} "${curdir}/*")
-    elseif (${depth} STREQUAL "3")
-        FILE(GLOB_RECURSE children LIST_DIRECTORIES true RELATIVE ${curdir} "${curdir}/*" "${curdir}/*/*")
-    elseif (${depth} STREQUAL "4")
-        FILE(GLOB_RECURSE children LIST_DIRECTORIES true RELATIVE ${curdir} "${curdir}/*" "${curdir}/*/*" "${curdir}/*/*/*")
-    else ()
-        message(FATAL "depth =[1 2 3 4]")
+    # 检查 depth 是否有效
+    if (depth LESS 1)
+        message(FATAL_ERROR "depth must be at least 1")
     endif ()
+
+    # 动态生成递归模式
+    set(patterns "")
+    foreach (i RANGE 1 ${depth})
+        # 生成当前深度的模式
+        set(pattern "${curdir}")
+        foreach (j RANGE 1 ${i})
+            set(pattern "${pattern}/*")
+        endforeach ()
+        list(APPEND patterns "${pattern}")
+    endforeach ()
+
+    # 使用动态生成的模式进行递归查找
+    FILE(GLOB_RECURSE children LIST_DIRECTORIES true RELATIVE ${curdir} ${patterns})
 
     #message(DEBUG "\n children: ${children}")
     set(dirlist "")
