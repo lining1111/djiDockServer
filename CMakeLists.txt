@@ -12,6 +12,19 @@ link_directories(${CMAKE_BINARY_DIR})
 #link_libraries(-lcrypto)
 #link_libraries(-lssh2)
 
+
+# dji_thermal_sdk
+include_directories(${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/api)
+link_directories(${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/lib/linux/release_x64)
+#设置加载路径
+#set(ENV{LD_LIBRARY_PATH} "${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/lib/linux/release_x64")
+#if(DEFINED ENV{LD_LIBRARY_PATH})
+#    message(STATUS "LD_LIBRARY_PATH is: $ENV{LD_LIBRARY_PATH}")
+#else()
+#    message(STATUS "LD_LIBRARY_PATH is not set")
+#endif()
+set(DJI_THERMAL_LIBS dirp)
+
 find_package(yaml-cpp REQUIRED)
 
 set(PocoLibs PocoUtil PocoFoundation PocoJSON PocoXML PocoNet PocoData PocoDataSQLite)
@@ -79,7 +92,7 @@ list(REMOVE_ITEM SRC_FILES ./main.cpp)
 
 
 
-set(LIBS m pthread gflags glog yaml-cpp ${DJI_LIBS})
+set(LIBS m pthread gflags glog yaml-cpp ${DJI_LIBS} ${DJI_THERMAL_LIBS})
 add_executable(djiDockServer main.cpp ${SRC_FILES})
 target_link_libraries(djiDockServer ${LIBS})
 
@@ -88,3 +101,7 @@ target_link_libraries(test_ffmpeg_decode_h264 ${LIBS})
 
 add_executable(rtsp_push test/rtsp_push.cpp)
 target_link_libraries(rtsp_push ${LIBS})
+
+add_executable(test_dji_thermal test/test_dji_thermal.cpp
+        DJI/DJIThermal.cpp)
+target_link_libraries(test_dji_thermal ${LIBS})
