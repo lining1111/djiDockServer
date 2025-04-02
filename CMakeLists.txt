@@ -15,14 +15,9 @@ link_directories(${CMAKE_BINARY_DIR})
 
 # dji_thermal_sdk
 include_directories(${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/api)
+# link_directories 会在执行make install前指定应用程序的RUNPATH的，
+# 但是通过readelf -d查看DJI TSDK的时候库的入口库libdirp.so的RUNPATH是空的。这时在不改变动态库属性的情况下，必须将TSDK的动态库拷贝到系统的动态库加载路径中
 link_directories(${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/lib/linux/release_x64)
-#设置加载路径
-#set(ENV{LD_LIBRARY_PATH} "${CMAKE_CURRENT_LIST_DIR}/dji_thermal_sdk/tsdk-core/lib/linux/release_x64")
-#if(DEFINED ENV{LD_LIBRARY_PATH})
-#    message(STATUS "LD_LIBRARY_PATH is: $ENV{LD_LIBRARY_PATH}")
-#else()
-#    message(STATUS "LD_LIBRARY_PATH is not set")
-#endif()
 set(DJI_THERMAL_LIBS dirp)
 
 find_package(yaml-cpp REQUIRED)
